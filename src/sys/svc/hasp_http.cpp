@@ -67,9 +67,16 @@ ESP8266WebServer webServer(80);
 #endif
 
 #if defined(ARDUINO_ARCH_ESP32)
-#include <WebServer.h>
+#include <ESPWebServerSecure.hpp>
+//#include <WebServer.h>
 #include <detail/mimetable.h>
-WebServer webServer(80);
+//#include <http_parser.h>
+ESPWebServerSecure webServer(443);
+#if defined(_HTTP_Method_H_)
+    #define HTTP_METHOD HTTPMethod
+#else
+    #define HTTP_METHOD http_method
+#endif
 
 #if defined(CONFIG_IDF_TARGET_ESP32) || defined(CONFIG_IDF_TARGET_ESP32S2) || defined(CONFIG_IDF_TARGET_ESP32S3) || defined(CONFIG_IDF_TARGET_ESP32C3)
 extern const uint8_t EDIT_HTM_GZ_START[] asm("_binary_data_static_edit_htm_gz_start");
@@ -209,8 +216,12 @@ bool http_is_authenticated()
     if(http_config.password[0] != '\0') { // Request HTTP auth if httpPassword is set
         if(!webServer.authenticate(http_config.username, http_config.password)) {
             webServer.requestAuthentication();
+#if defined(ESPWEBSERVERSECURE_H)            
+            LOG_WARNING(TAG_HTTP, D_TELNET_INCORRECT_LOGIN_ATTEMPT,"");
+#else
             LOG_WARNING(TAG_HTTP, D_TELNET_INCORRECT_LOGIN_ATTEMPT,
                         webServer.client().remoteIP().toString().c_str());
+#endif
             return false;
         }
     }
@@ -223,8 +234,11 @@ bool http_is_authenticated(const __FlashStringHelper* notused)
     if(!http_is_authenticated()) return false;
 
 #if defined(ARDUINO_ARCH_ESP32) || defined(ARDUINO_ARCH_ESP8266)
+#if defined(ESPWEBSERVERSECURE_H) 
+#else
     LOG_VERBOSE(TAG_HTTP, D_HTTP_SENDING_PAGE, webServer.uri().c_str(),
                 webServer.client().remoteIP().toString().c_str());
+#endif                
 #else
         // LOG_INFO(TAG_HTTP,D_HTTP_SENDING_PAGE, page,
         //             String(webServer.client().remoteIP()).c_str());
@@ -239,8 +253,11 @@ bool http_is_authenticated(const char* notused)
     if(!http_is_authenticated()) return false;
 
 #if defined(ARDUINO_ARCH_ESP32) || defined(ARDUINO_ARCH_ESP8266)
+#if defined(ESPWEBSERVERSECURE_H) 
+#else
     LOG_VERBOSE(TAG_HTTP, D_HTTP_SENDING_PAGE, webServer.uri().c_str(),
                 webServer.client().remoteIP().toString().c_str());
+#endif                
 #else
         // LOG_INFO(TAG_HTTP,D_HTTP_SENDING_PAGE, page,
         //             String(webServer.client().remoteIP()).c_str());
@@ -349,7 +366,11 @@ static void http_send_content(const char* form[], int count, uint8_t gohome = 0)
     }
     webSendHtmlHeader(haspDevice.get_hostname(), total, gohome);
     for(int i = 0; i < count; i++) {
+#if defined(STM32F4xx)
         if(form[i]) webServer.sendContent(form[i], len[i]);
+#else        
+        if(form[i]) webServer.sendContent_P(form[i], len[i]);
+#endif
     }
     webSendFooter();
 }
@@ -511,7 +532,10 @@ static void http_handle_screenshot()
             webServer.setContentLength(66 + disp->driver.hor_res * disp->driver.ver_res * sizeof(lv_color_t));
             webServer.send(200, "image/bmp", "");
             guiTakeScreenshot();
+#if defined(ESPWEBSERVERSECURE_H)         
+#else
             webServer.client().stop();
+#endif
             return;
         }
     }
@@ -879,7 +903,11 @@ static void webHandleApiConfig()
     LOG_DEBUG(TAG_HTTP, "%s - %d", __FILE__, __LINE__);
     webServer.send(200, "application/json", "");
     LOG_DEBUG(TAG_HTTP, "%s - %d", __FILE__, __LINE__);
+#if defined(ESPWEBSERVERSECURE_H)    
+    webServer.sendContent_P(jsondata,size);
+#else
     webServer.sendContent(jsondata, size);
+#endif    
     LOG_DEBUG(TAG_HTTP, "%s - %d", __FILE__, __LINE__);
 }
 
@@ -1102,8 +1130,11 @@ static inline int handleFilesystemFile(String path)
             path = pathWithGz; // Only use .gz if normal file doesn't exist
         // if(!HASP_FS.exists(path) && HASP_FS.exists(pathWithBr))
         //     path = pathWithBr; // Only use .gz if normal file doesn't exist
-
+#if defined(ESPWEBSERVERSECURE_H)
+        LOG_TRACE(TAG_HTTP, D_HTTP_SENDING_PAGE, path.c_str(), "");
+#else
         LOG_TRACE(TAG_HTTP, D_HTTP_SENDING_PAGE, path.c_str(), webServer.client().remoteIP().toString().c_str());
+#endif        
 
         String configFile((char*)0); // Verify if the file is config.json
         configFile = FPSTR(FP_HASP_CONFIG_FILE);
@@ -2343,6 +2374,11 @@ static inline int handleFirmwareFile(String path)
     return 404;
 }
 
+extern struct _METHODNAMES {
+  int val;
+  char text[8];
+} METHODNAMES[sizeof(HTTPMethod)];
+
 static inline void httpHandleInvalidRequest(int statuscode, String& path)
 {
     String httpMessage((char*)0);
@@ -2356,7 +2392,15 @@ static inline void httpHandleInvalidRequest(int statuscode, String& path)
     httpMessage += F("\n\nURI: ");
     httpMessage += path;
     httpMessage += F("\nMethod: ");
+#if defined(ESPWEBSERVERSECURE_H)
+    HTTPMethod mtd = webServer.method();
+    size_t n = 0;
+    for(; n < sizeof(METHODNAMES); n++) 
+        if (mtd == (METHODNAMES[n].val)) break;
+    httpMessage += METHODNAMES[n].text;
+#else
     httpMessage += http_method_str(webServer.method());
+#endif    
     httpMessage += F("\nArguments: ");
     httpMessage += webServer.args();
     httpMessage += "\n";
@@ -2382,8 +2426,13 @@ static void httpHandleFile(String path)
     }
 
 #if defined(ARDUINO_ARCH_ESP32) || defined(ARDUINO_ARCH_ESP8266)
+#if defined(ESPWEBSERVERSECURE_H)
+LOG_TRACE(TAG_HTTP, F("Sending %d %s to client connected from: %s"), statuscode, path.c_str(),
+              "");
+#else
     LOG_TRACE(TAG_HTTP, F("Sending %d %s to client connected from: %s"), statuscode, path.c_str(),
               webServer.client().remoteIP().toString().c_str());
+#endif
 #else
     // LOG_TRACE(TAG_HTTP,F("Sending 404 to client connected from: %s"),
     // String(webServer.client().remoteIP()).c_str());
@@ -2520,9 +2569,66 @@ static void httpHandleResetConfig()
 }
 #endif // HASP_USE_CONFIG
 
+static	uint8_t* mKey=nullptr;
+	/**
+	 * @brief MCU certificate array
+	 * 
+	 */
+static	uint8_t* mCrt=nullptr;
+static	size_t mKeyLen=0;
+static	size_t mCrtLen=0;
+
+bool readMcuCertKeys()
+{
+    File f = HASP_FS.open("/cert/mcu.key","r");
+    mKeyLen = f.size();
+    mKey = new uint8_t[mKeyLen];
+    size_t readed = f.readBytes((char *)mKey, mKeyLen);
+    f.close();
+        // Debug("SSL PKey readed\n");
+    if (mKeyLen != readed)
+    {
+        delete(mKey);
+        mKey = nullptr;			
+    }
+    else
+    {
+        f = HASP_FS.open("/cert/mcu.crt","r");
+        mCrtLen = f.size();
+        mCrt = new uint8_t[mCrtLen];
+        if (nullptr != mCrt)
+        {
+            readed = f.readBytes((char*)mCrt,mCrtLen);
+            f.close();
+            if (mCrtLen != readed)
+            {
+                delete(mCrt);
+                mCrt = nullptr;
+                delete(mKey);
+                mKey = nullptr;
+            }
+            return true;
+        }
+    }
+    return false;
+}
+
 void httpStart()
 {
+#if defined(ESPWEBSERVERSECURE_H)    
+    if (readMcuCertKeys())
+    {
+        webServer.setServerKeyAndCert(mKey, mKeyLen, mCrt, mCrtLen);
+        webServer.begin();
+    }
+    else 
+    {
+        LOG_INFO(TAG_HTTP, F(D_SERVICE_START_FAILED " @ https"));
+        return;
+    }
+#else
     webServer.begin(80);
+#endif
     webServerStarted = true;
 #if HASP_USE_WIFI > 0
 #if defined(STM32F4xx)
@@ -2605,7 +2711,11 @@ static inline void webStartConfigPortal()
 #endif // HASP_USE_CAPTIVE_PORTAL
 
     webServer.on("/vars.css", httpHandleFileUri);
-    webServer.on(UriBraces("/static/{}"), httpHandleFileUri);
+#if defined(ESPWEBSERVERSECURE_H)
+    webServer.on(F("/static/{}"), httpHandleFileUri);
+#else    
+    webServer.on(UriBraces("/static/{}")., httpHandleFileUri);
+#endif    
     // webServer.on("/script.js", httpHandleFileUri);
 // reply to all requests with same HTML
 #if HASP_USE_WIFI > 0
@@ -2632,16 +2742,23 @@ void httpSetup()
     webServer.on("/about", http_handle_about);
     // webServer.on("/vars.css", webSendCssVars);
     // webServer.on("/js", webSendJavascript);
+#if defined(ESPWEBSERVERSECURE_H)
+    webServer.on(F("/api/config/{}/"), webHandleApiConfig);
+    webServer.on(F("/api/{}/"), webHandleApi);
+
+    webServer.on(F("/config/{}/"), HTTP_METHOD::HTTP_GET, []() { httpHandleFile(F("/hasp.htm")); }); // SPA Route
+    webServer.on(F("/{}/"), HTTP_METHOD::HTTP_GET, []() { httpHandleFile(F("/hasp.htm")); });        // SPA Route
+#else    
     webServer.on(UriBraces("/api/config/{}/"), webHandleApiConfig);
     webServer.on(UriBraces("/api/{}/"), webHandleApi);
 
     webServer.on(UriBraces("/config/{}/"), HTTP_GET, []() { httpHandleFile(F("/hasp.htm")); }); // SPA Route
     webServer.on(UriBraces("/{}/"), HTTP_GET, []() { httpHandleFile(F("/hasp.htm")); });        // SPA Route
-
+#endif
 #if defined(ARDUINO_ARCH_ESP32) || defined(ARDUINO_ARCH_ESP8266)
     webServer.on("/firmware", webHandleFirmware);
     webServer.on(
-        F("/update"), HTTP_POST,
+        F("/update"), HTTP_METHOD::HTTP_POST,
         []() {
             webServer.send(200, "text/plain", "");
             LOG_VERBOSE(TAG_HTTP, F("Total size: %s"), webServer.hostHeader().c_str());
@@ -2675,15 +2792,15 @@ void httpSetup()
     });
 
 #if HASP_USE_SPIFFS > 0 || HASP_USE_LITTLEFS > 0
-    webServer.on("/list", HTTP_GET, handleFileList);
+    webServer.on("/list", HTTP_METHOD::HTTP_GET, handleFileList);
     // load editor
-    webServer.on("/edit", HTTP_GET, []() { httpHandleFile(F("/edit.htm")); });
-    webServer.on("/edit", HTTP_PUT, handleFileCreate);
-    webServer.on("/edit", HTTP_DELETE, handleFileDelete);
+    webServer.on("/edit", HTTP_METHOD::HTTP_GET, []() { httpHandleFile(F("/edit.htm")); });
+    webServer.on("/edit", HTTP_METHOD::HTTP_PUT, handleFileCreate);
+    webServer.on("/edit", HTTP_METHOD::HTTP_DELETE, handleFileDelete);
     // first callback is called after the request has ended with all parsed arguments
     // second callback handles file uploads at that location
     webServer.on(
-        F("/edit"), HTTP_POST,
+        F("/edit"), HTTP_METHOD::HTTP_POST,
         []() {
             webServer.setContentLength(CONTENT_LENGTH_NOT_SET);
             webServer.send(200, "text/plain", "OK");
@@ -2800,6 +2917,17 @@ size_t httpClientWrite(const uint8_t* buf, size_t size)
     /***** Sending 16Kb at once freezes on STM32 EthernetClient *****/
     size_t bytes_sent = 0;
     while(bytes_sent < size) {
+#if defined(ESPWEBSERVERSECURE_H)
+        if(size - bytes_sent >= 20480) {
+            webServer.sendContent_P((const char *)(buf + bytes_sent), 20480); // 2048
+            bytes_sent += 2048;
+            delay(1);                                                        // Fixes the freeze
+        } else {
+            webServer.sendContent_P((const char *)(buf + bytes_sent), size - bytes_sent);
+            bytes_sent += size - bytes_sent;
+            return bytes_sent;
+        }
+#else        
         if(!webServer.client() || !webServer.client().connected()) return bytes_sent;
         if(size - bytes_sent >= 20480) {
             bytes_sent += webServer.client().write(buf + bytes_sent, 20480); // 2048
@@ -2808,6 +2936,7 @@ size_t httpClientWrite(const uint8_t* buf, size_t size)
             bytes_sent += webServer.client().write(buf + bytes_sent, size - bytes_sent);
             return bytes_sent;
         }
+#endif        
         // Serial.println(bytes_sent);
 
         // stm32_eth_scheduler(); // already in write
