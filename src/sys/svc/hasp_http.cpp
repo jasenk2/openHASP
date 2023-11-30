@@ -2374,7 +2374,7 @@ static inline int handleFirmwareFile(String path)
     return 404;
 }
 
-extern struct _METHODNAMES {
+struct _METHODNAMES {
   int val;
   char text[8];
 } METHODNAMES[sizeof(HTTPMethod)];
